@@ -1,0 +1,68 @@
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 24px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  transition: all var(--transition);
+}
+
+.stat-card:hover {
+  border-color: var(--border-active);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.stat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-card-accent .stat-icon {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent);
+}
+
+.stat-card-success .stat-icon {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.stat-card-warning .stat-icon {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.stat-card-danger .stat-icon {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.stat-card-info .stat-icon {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.stat-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

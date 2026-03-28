@@ -1,0 +1,34 @@
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-info {
+  background: var(--info-bg);
+  color: var(--info);
+}
+
+.status-success {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.status-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.status-accent {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent);
+}
