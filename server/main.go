@@ -18,6 +18,8 @@ import (
 
 var db *sql.DB
 
+// ==================== DB INIT ====================
+
 func initDB(dbPath string) error {
 	var err error
 	db, err = sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)")
@@ -26,15 +28,21 @@ func initDB(dbPath string) error {
 	}
 
 	tables := []string{
+		// --- Main tables ---
+		`CREATE TABLE IF NOT EXISTS groups_t (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			course INTEGER NOT NULL DEFAULT 1,
+			study_form TEXT NOT NULL DEFAULT '',
+			training_direction TEXT NOT NULL DEFAULT ''
+		);`,
 		`CREATE TABLE IF NOT EXISTS students (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			fio TEXT NOT NULL,
-			record_book_number TEXT NOT NULL,
-			group_name TEXT NOT NULL,
-			course INTEGER NOT NULL DEFAULT 1,
-			study_form TEXT NOT NULL DEFAULT 'Очная',
-			training_direction TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'Активен'
+			record_book_number TEXT NOT NULL UNIQUE,
+			group_id INTEGER NOT NULL,
+			status TEXT NOT NULL DEFAULT 'Активен',
+			FOREIGN KEY(group_id) REFERENCES groups_t(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS teachers (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,193 +56,213 @@ func initDB(dbPath string) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			semester INTEGER NOT NULL DEFAULT 1,
-			control_type TEXT NOT NULL DEFAULT 'Экзамен',
+			control_type TEXT NOT NULL DEFAULT '',
 			hours INTEGER NOT NULL DEFAULT 0,
 			teacher_id INTEGER,
 			FOREIGN KEY(teacher_id) REFERENCES teachers(id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS sheets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			number TEXT NOT NULL UNIQUE,
+			fill_date TEXT NOT NULL DEFAULT '',
+			group_id INTEGER NOT NULL,
+			discipline_id INTEGER NOT NULL,
+			FOREIGN KEY(group_id) REFERENCES groups_t(id),
+			FOREIGN KEY(discipline_id) REFERENCES disciplines(id)
+		);`,
 		`CREATE TABLE IF NOT EXISTS performance (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			sheet_id INTEGER NOT NULL,
 			student_id INTEGER NOT NULL,
-			discipline_id INTEGER NOT NULL,
-			teacher_id INTEGER,
-			sheet_number TEXT NOT NULL DEFAULT '',
-			sheet_fill_date TEXT NOT NULL DEFAULT '',
 			grade TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT '',
 			comment TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
 			has_debt INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT '',
-			FOREIGN KEY(student_id) REFERENCES students(id),
-			FOREIGN KEY(discipline_id) REFERENCES disciplines(id),
-			FOREIGN KEY(teacher_id) REFERENCES teachers(id)
+			FOREIGN KEY(sheet_id) REFERENCES sheets(id),
+			FOREIGN KEY(student_id) REFERENCES students(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS commissions (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			student_id INTEGER NOT NULL,
 			performance_id INTEGER NOT NULL,
 			assigned_date TEXT NOT NULL DEFAULT '',
+			meeting_date TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'Назначена',
 			decision TEXT NOT NULL DEFAULT '',
 			description TEXT NOT NULL DEFAULT '',
-			FOREIGN KEY(student_id) REFERENCES students(id),
 			FOREIGN KEY(performance_id) REFERENCES performance(id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS commission_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			commission_id INTEGER NOT NULL,
+			teacher_id INTEGER NOT NULL,
+			role TEXT NOT NULL DEFAULT 'Член комиссии',
+			FOREIGN KEY(commission_id) REFERENCES commissions(id),
+			FOREIGN KEY(teacher_id) REFERENCES teachers(id)
 		);`,
 	}
 
 	for _, query := range tables {
 		if _, err := db.Exec(query); err != nil {
-			return fmt.Errorf("create table error: %w", err)
+			return fmt.Errorf("create table: %w", err)
 		}
 	}
 
-	// Seed demo data if tables are empty
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM teachers").Scan(&count)
 	if count == 0 {
 		seedData()
 	}
-
 	return nil
 }
 
-func hashPassword(password string) string {
-	h := sha256.Sum256([]byte(password))
+func hashPassword(p string) string {
+	h := sha256.Sum256([]byte(p))
 	return fmt.Sprintf("%x", h)
 }
+
+// ==================== SEED ====================
 
 func seedData() {
 	now := time.Now().Format("2006-01-02")
 
+	// Groups: name, course, study_form, training_direction
+	groups := []struct {
+		name string; course int; form, dir string
+	}{
+		{"ИС-21", 2, "Очная", "Информационные системы"}, 
+		{"ПИ-31", 3, "Очная", "Программная инженерия"}, 
+		{"КБ-41", 4, "Очная", "Кибербезопасность"},
+	}
+	for _, g := range groups {
+		db.Exec("INSERT INTO groups_t(name,course,study_form,training_direction) VALUES(?,?,?,?)", g.name, g.course, g.form, g.dir)
+	}
+
 	// Teachers
 	teachers := []struct {
-		fio, position, degree, login, password string
+		fio, pos, degree, login string
 	}{
-		{"Иванов Сергей Петрович", "Профессор", "Доктор наук", "ivanov", "123456"},
-		{"Петрова Елена Алексеевна", "Доцент", "Кандидат наук", "petrova", "123456"},
-		{"Сидоров Дмитрий Николаевич", "Старший преподаватель", "Кандидат наук", "sidorov", "123456"},
-		{"Козлова Анна Михайловна", "Доцент", "Кандидат наук", "kozlova", "123456"},
-		{"Новиков Алексей Владимирович", "Профессор", "Доктор наук", "novikov", "123456"},
+		{"Иванов Сергей Петрович", "Профессор", "Доктор наук", "ivanov"},
+		{"Петрова Елена Алексеевна", "Доцент", "Кандидат наук", "petrova"},
+		{"Сидоров Дмитрий Николаевич", "Старший преподаватель", "Кандидат наук", "sidorov"},
+		{"Козлова Анна Михайловна", "Доцент", "Кандидат наук", "kozlova"},
+		{"Новиков Алексей Владимирович", "Профессор", "Доктор наук", "novikov"},
 	}
 	for _, t := range teachers {
-		db.Exec("INSERT INTO teachers (fio, position, academic_degree, login, password_hash) VALUES (?,?,?,?,?)",
-			t.fio, t.position, t.degree, t.login, hashPassword(t.password))
+		db.Exec("INSERT INTO teachers(fio,position,academic_degree,login,password_hash) VALUES(?,?,?,?,?)",
+			t.fio, t.pos, t.degree, t.login, hashPassword("123456"))
 	}
 
-	// Students — 3 groups × 5 students
-	students := []struct {
-		fio, recordBook, group string
-		course                 int
-		studyForm, direction   string
+	// Students
+	studs := []struct {
+		fio, rb string; gid int
 	}{
-		{"Абрамов Иван Сергеевич", "2024-001", "ИС-21", 2, "Очная", "Информационные системы"},
-		{"Белова Мария Дмитриевна", "2024-002", "ИС-21", 2, "Очная", "Информационные системы"},
-		{"Васильев Пётр Андреевич", "2024-003", "ИС-21", 2, "Очная", "Информационные системы"},
-		{"Григорьева Анна Олеговна", "2024-004", "ИС-21", 2, "Очная", "Информационные системы"},
-		{"Дмитриев Олег Игоревич", "2024-005", "ИС-21", 2, "Очная", "Информационные системы"},
-
-		{"Егоров Максим Викторович", "2024-006", "ПИ-31", 3, "Очная", "Программная инженерия"},
-		{"Жукова Елена Сергеевна", "2024-007", "ПИ-31", 3, "Очная", "Программная инженерия"},
-		{"Зайцев Артём Павлович", "2024-008", "ПИ-31", 3, "Очная", "Программная инженерия"},
-		{"Ильина Дарья Романовна", "2024-009", "ПИ-31", 3, "Очная", "Программная инженерия"},
-		{"Кузнецов Никита Алексеевич", "2024-010", "ПИ-31", 3, "Очная", "Программная инженерия"},
-
-		{"Лебедев Роман Дмитриевич", "2024-011", "КБ-41", 4, "Очная", "Кибербезопасность"},
-		{"Морозова Ольга Ивановна", "2024-012", "КБ-41", 4, "Очная", "Кибербезопасность"},
-		{"Николаев Сергей Владимирович", "2024-013", "КБ-41", 4, "Очная", "Кибербезопасность"},
-		{"Орлова Виктория Андреевна", "2024-014", "КБ-41", 4, "Очная", "Кибербезопасность"},
-		{"Павлов Денис Олегович", "2024-015", "КБ-41", 4, "Очно-заочная", "Кибербезопасность"},
+		{"Абрамов Иван Сергеевич", "2024-001", 1},
+		{"Белова Мария Дмитриевна", "2024-002", 1},
+		{"Васильев Пётр Андреевич", "2024-003", 1},
+		{"Григорьева Анна Олеговна", "2024-004", 1},
+		{"Дмитриев Олег Игоревич", "2024-005", 1},
+		{"Егоров Максим Викторович", "2024-006", 2},
+		{"Жукова Елена Сергеевна", "2024-007", 2},
+		{"Зайцев Артём Павлович", "2024-008", 2},
+		{"Ильина Дарья Романовна", "2024-009", 2},
+		{"Кузнецов Никита Алексеевич", "2024-010", 2},
+		{"Лебедев Роман Дмитриевич", "2024-011", 3},
+		{"Морозова Ольга Ивановна", "2024-012", 3},
+		{"Николаев Сергей Владимирович", "2024-013", 3},
+		{"Орлова Виктория Андреевна", "2024-014", 3},
+		{"Павлов Денис Олегович", "2024-015", 3},
 	}
-	for _, s := range students {
-		db.Exec("INSERT INTO students (fio, record_book_number, group_name, course, study_form, training_direction, status) VALUES (?,?,?,?,?,?,?)",
-			s.fio, s.recordBook, s.group, s.course, s.studyForm, s.direction, "Активен")
+	for _, s := range studs {
+		db.Exec("INSERT INTO students(fio,record_book_number,group_id,status) VALUES(?,?,?,?)", s.fio, s.rb, s.gid, "Активен")
 	}
 
-	// Disciplines
-	disciplines := []struct {
-		name, controlType string
-		semester, hours   int
-		teacherId         int
+	// Disciplines: name, semester, control_type, hours, teacher_id
+	discs := []struct {
+		name string; sem int; ctrl string; hrs, tid int
 	}{
-		{"Базы данных", "Экзамен", 3, 108, 1},
-		{"Программирование на Go", "Экзамен", 4, 72, 1},
-		{"Математический анализ", "Экзамен", 3, 144, 2},
-		{"Операционные системы", "Зачёт", 5, 90, 3},
-		{"Компьютерные сети", "Экзамен", 6, 108, 4},
-		{"Информационная безопасность", "Зачёт", 7, 72, 5},
+		{"Базы данных", 3, "Экзамен", 108, 1},
+		{"Программирование на Go", 4, "Экзамен", 72, 1},
+		{"Математический анализ", 3, "Экзамен", 144, 2},
+		{"Операционные системы", 5, "Зачёт", 90, 3},
+		{"Компьютерные сети", 6, "Экзамен", 108, 4},
+		{"Информационная безопасность", 7, "Зачёт", 72, 5},
 	}
-	for _, d := range disciplines {
-		db.Exec("INSERT INTO disciplines (name, semester, control_type, hours, teacher_id) VALUES (?,?,?,?,?)",
-			d.name, d.semester, d.controlType, d.hours, d.teacherId)
+	for _, d := range discs {
+		db.Exec("INSERT INTO disciplines(name,semester,control_type,hours,teacher_id) VALUES(?,?,?,?,?)",
+			d.name, d.sem, d.ctrl, d.hrs, d.tid)
 	}
 
-	// Performance records
-	type perfRec struct {
-		studentId, disciplineId, teacherId int
-		sheetNum, grade, status, comment   string
-		hasDebt                            int
+	// Sheets: number, fill_date, group_id, discipline_id
+	shts := []struct {
+		num string; gid, did int
+	}{
+		{"ВД-001", 1, 1}, {"ВД-002", 1, 3}, {"ВД-003", 2, 4},
+		{"ВД-004", 2, 2}, {"ВД-005", 3, 5}, {"ВД-006", 3, 6},
 	}
-	perfRecords := []perfRec{
-		// ИС-21 group for "Базы данных" (discipline 1, teacher 1)
-		{1, 1, 1, "ВД-001", "Отлично", "Сдано", "", 0},
-		{2, 1, 1, "ВД-001", "Хорошо", "Сдано", "", 0},
-		{3, 1, 1, "ВД-001", "Неудовлетворительно", "Не сдано", "Не явился на экзамен", 1},
-		{4, 1, 1, "ВД-001", "Удовлетворительно", "Сдано", "", 0},
-		{5, 1, 1, "ВД-001", "Неудовлетворительно", "Не сдано", "Плохая подготовка", 1},
-
-		// ИС-21 group for "Математический анализ" (discipline 3, teacher 2)
-		{1, 3, 2, "ВД-002", "Хорошо", "Сдано", "", 0},
-		{2, 3, 2, "ВД-002", "Отлично", "Сдано", "", 0},
-		{3, 3, 2, "ВД-002", "Неудовлетворительно", "Не сдано", "Систематические пропуски", 1},
-		{4, 3, 2, "ВД-002", "Хорошо", "Сдано", "", 0},
-		{5, 3, 2, "ВД-002", "Удовлетворительно", "Сдано", "", 0},
-
-		// ПИ-31 group for "Операционные системы" (discipline 4, teacher 3)
-		{6, 4, 3, "ВД-003", "Зачтено", "Сдано", "", 0},
-		{7, 4, 3, "ВД-003", "Зачтено", "Сдано", "", 0},
-		{8, 4, 3, "ВД-003", "Не зачтено", "Не сдано", "Не сдал лабораторные работы", 1},
-		{9, 4, 3, "ВД-003", "Зачтено", "Сдано", "", 0},
-		{10, 4, 3, "ВД-003", "Не зачтено", "Не сдано", "Низкая посещаемость", 1},
-
-		// ПИ-31 group for "Программирование на Go" (discipline 2, teacher 1)
-		{6, 2, 1, "ВД-004", "Отлично", "Сдано", "", 0},
-		{7, 2, 1, "ВД-004", "Хорошо", "Сдано", "", 0},
-		{8, 2, 1, "ВД-004", "Удовлетворительно", "Сдано", "", 0},
-		{9, 2, 1, "ВД-004", "Неудовлетворительно", "Не сдано", "Не сдал проект", 1},
-		{10, 2, 1, "ВД-004", "Хорошо", "Сдано", "", 0},
-
-		// КБ-41 group for "Компьютерные сети" (discipline 5, teacher 4)
-		{11, 5, 4, "ВД-005", "Отлично", "Сдано", "", 0},
-		{12, 5, 4, "ВД-005", "Хорошо", "Сдано", "", 0},
-		{13, 5, 4, "ВД-005", "Удовлетворительно", "Сдано", "", 0},
-		{14, 5, 4, "ВД-005", "Неудовлетворительно", "Не сдано", "Не выполнил курсовую работу", 1},
-		{15, 5, 4, "ВД-005", "Удовлетворительно", "Сдано", "", 0},
-
-		// КБ-41 group for "Информационная безопасность" (discipline 6, teacher 5)
-		{11, 6, 5, "ВД-006", "Зачтено", "Сдано", "", 0},
-		{12, 6, 5, "ВД-006", "Не зачтено", "Не сдано", "Не защитил лабораторные", 1},
-		{13, 6, 5, "ВД-006", "Зачтено", "Сдано", "", 0},
-		{14, 6, 5, "ВД-006", "Не зачтено", "Не сдано", "Пропуски занятий", 1},
-		{15, 6, 5, "ВД-006", "Зачтено", "Сдано", "", 0},
+	for _, s := range shts {
+		db.Exec("INSERT INTO sheets(number,fill_date,group_id,discipline_id) VALUES(?,?,?,?)", s.num, now, s.gid, s.did)
 	}
-	for _, p := range perfRecords {
-		db.Exec(`INSERT INTO performance (student_id, discipline_id, teacher_id, sheet_number, sheet_fill_date, grade, status, comment, has_debt, created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?)`,
-			p.studentId, p.disciplineId, p.teacherId, p.sheetNum, now, p.grade, p.status, p.comment, p.hasDebt, now)
+
+	// Performance
+	type pRec struct {
+		sheetID, studentID int
+		grade, status, comment string
+		hasDebt int
+	}
+	perfs := []pRec{
+		{1,1,"Отлично","Сдано","",0},{1,2,"Хорошо","Сдано","",0},
+		{1,3,"Неудовлетворительно","Не сдано","Не явился на экзамен",1},
+		{1,4,"Удовлетворительно","Сдано","",0},
+		{1,5,"Неудовлетворительно","Не сдано","Плохая подготовка",1},
+		{2,1,"Хорошо","Сдано","",0},{2,2,"Отлично","Сдано","",0},
+		{2,3,"Неудовлетворительно","Не сдано","Систематические пропуски",1},
+		{2,4,"Хорошо","Сдано","",0},{2,5,"Удовлетворительно","Сдано","",0},
+		{3,6,"Зачтено","Сдано","",0},{3,7,"Зачтено","Сдано","",0},
+		{3,8,"Не зачтено","Не сдано","Не сдал лабораторные работы",1},
+		{3,9,"Зачтено","Сдано","",0},
+		{3,10,"Не зачтено","Не сдано","Низкая посещаемость",1},
+		{4,6,"Отлично","Сдано","",0},{4,7,"Хорошо","Сдано","",0},
+		{4,8,"Удовлетворительно","Сдано","",0},
+		{4,9,"Неудовлетворительно","Не сдано","Не сдал проект",1},
+		{4,10,"Хорошо","Сдано","",0},
+		{5,11,"Отлично","Сдано","",0},{5,12,"Хорошо","Сдано","",0},
+		{5,13,"Удовлетворительно","Сдано","",0},
+		{5,14,"Неудовлетворительно","Не сдано","Не выполнил курсовую работу",1},
+		{5,15,"Удовлетворительно","Сдано","",0},
+		{6,11,"Зачтено","Сдано","",0},
+		{6,12,"Не зачтено","Не сдано","Не защитил лабораторные",1},
+		{6,13,"Зачтено","Сдано","",0},
+		{6,14,"Не зачтено","Не сдано","Пропуски занятий",1},
+		{6,15,"Зачтено","Сдано","",0},
+	}
+	for _, p := range perfs {
+		db.Exec(`INSERT INTO performance(sheet_id,student_id,grade,comment,status,has_debt,created_at) VALUES(?,?,?,?,?,?,?)`,
+			p.sheetID, p.studentID, p.grade, p.comment, p.status, p.hasDebt, now)
 	}
 
 	// Commissions
-	db.Exec(`INSERT INTO commissions (student_id, performance_id, assigned_date, status, decision, description)
-		VALUES (?,?,?,?,?,?)`, 3, 3, now, "Назначена", "", "Студент не явился на экзамен по дисциплине «Базы данных»")
-	db.Exec(`INSERT INTO commissions (student_id, performance_id, assigned_date, status, decision, description)
-		VALUES (?,?,?,?,?,?)`, 8, 13, now, "Проведена", "Допущен к пересдаче", "Не сдал лабораторные по ОС, допущен к пересдаче")
-	db.Exec(`INSERT INTO commissions (student_id, performance_id, assigned_date, status, decision, description)
-		VALUES (?,?,?,?,?,?)`, 14, 24, now, "Закрыта", "Условный перевод", "Перевод с условием пересдачи курсовой работы")
+	db.Exec(`INSERT INTO commissions(performance_id,assigned_date,meeting_date,status,decision,description) VALUES(?,?,?,?,?,?)`,
+		3, now, "", "Назначена", "", "Студент не явился на экзамен по дисциплине «Базы данных»")
+	db.Exec(`INSERT INTO commissions(performance_id,assigned_date,meeting_date,status,decision,description) VALUES(?,?,?,?,?,?)`,
+		13, now, now, "Проведена", "Допущен к пересдаче", "Не сдал лабораторные по ОС")
+	db.Exec(`INSERT INTO commissions(performance_id,assigned_date,meeting_date,status,decision,description) VALUES(?,?,?,?,?,?)`,
+		24, now, now, "Закрыта", "Условный перевод", "Перевод с условием пересдачи курсовой работы")
+
+	// Commission members
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 1, 1, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 1, 2, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 1, 3, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 2, 3, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 2, 1, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 3, 4, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 3, 5, "Член комиссии")
+	db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", 3, 1, "Член комиссии")
 
 	log.Println("Demo data seeded successfully")
 }
 
-// --- Helpers ---
+// ==================== HELPERS ====================
 
 func sendJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -245,730 +273,512 @@ func parseJSON(r *http.Request, dest interface{}) error {
 	return json.NewDecoder(r.Body).Decode(dest)
 }
 
-func getIDFromPath(r *http.Request) string {
+func idFromPath(r *http.Request) string {
 	parts := strings.Split(r.URL.Path, "/")
 	return parts[len(parts)-1]
 }
 
-// --- Login ---
-
-func loginHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var creds struct {
-		Login    string `json:"login"`
-		Password string `json:"password"`
-	}
-	if err := parseJSON(r, &creds); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
-	var id int
-	var fio, position string
-	err := db.QueryRow("SELECT id, fio, position FROM teachers WHERE login = ? AND password_hash = ?",
-		creds.Login, hashPassword(creds.Password)).Scan(&id, &fio, &position)
-	if err != nil {
-		sendJSON(w, map[string]interface{}{"ok": false, "error": "Неверный логин или пароль"})
-		return
-	}
-	sendJSON(w, map[string]interface{}{"ok": true, "id": id, "fio": fio, "position": position})
+func emptyArr() []map[string]interface{} {
+	return make([]map[string]interface{}, 0)
 }
 
-// --- Students CRUD ---
+// ==================== LOGIN ====================
 
-func getStudentsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, fio, record_book_number, group_name, course, study_form, training_direction, status FROM students ORDER BY group_name, fio")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { http.Error(w, "method", 405); return }
+	var c struct{ Login, Password string }
+	parseJSON(r, &c)
+	var id int; var fio, pos string
+	err := db.QueryRow(`SELECT id, fio, position FROM teachers WHERE login=? AND password_hash=?`,
+		c.Login, hashPassword(c.Password)).Scan(&id, &fio, &pos)
+	if err != nil { sendJSON(w, map[string]interface{}{"ok": false, "error": "Неверный логин или пароль"}); return }
+	sendJSON(w, map[string]interface{}{"ok": true, "id": id, "fio": fio, "position": pos})
+}
+
+// ==================== GROUPS ====================
+
+func getGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT id, name, course, training_direction, study_form FROM groups_t ORDER BY name`)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
-
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id, course int
-		var fio, rb, grp, form, dir, status string
-		rows.Scan(&id, &fio, &rb, &grp, &course, &form, &dir, &status)
+		var id, course int; var name, dir, form string
+		rows.Scan(&id, &name, &course, &dir, &form)
 		res = append(res, map[string]interface{}{
-			"id": id, "fio": fio, "record_book_number": rb, "group_name": grp,
-			"course": course, "study_form": form, "training_direction": dir, "status": status,
+			"id": id, "name": name, "course": course, "training_direction": dir, "study_form": form,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
+	if res == nil { res = emptyArr() }
+	sendJSON(w, res)
+}
+
+// ==================== STUDENTS ====================
+
+func getStudentsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT s.id, s.fio, s.record_book_number, s.group_id, s.status,
+		g.name, g.course, g.training_direction, g.study_form
+		FROM students s JOIN groups_t g ON s.group_id=g.id
+		ORDER BY g.name, s.fio`)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	var res []map[string]interface{}
+	for rows.Next() {
+		var id, gid, course int; var fio, rb, status, gname, dir, form string
+		rows.Scan(&id, &fio, &rb, &gid, &status, &gname, &course, &dir, &form)
+		res = append(res, map[string]interface{}{
+			"id": id, "fio": fio, "record_book_number": rb, "group_id": gid, "status": status,
+			"group_name": gname, "course": course, "training_direction": dir, "study_form": form,
+		})
 	}
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
 func postStudentHandler(w http.ResponseWriter, r *http.Request) {
-	var s map[string]interface{}
-	parseJSON(r, &s)
-	res, err := db.Exec("INSERT INTO students (fio, record_book_number, group_name, course, study_form, training_direction, status) VALUES (?,?,?,?,?,?,?)",
-		s["fio"], s["record_book_number"], s["group_name"], s["course"], s["study_form"], s["training_direction"], s["status"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	var s map[string]interface{}; parseJSON(r, &s)
+	res, err := db.Exec("INSERT INTO students(fio,record_book_number,group_id,status) VALUES(?,?,?,?)",
+		s["fio"], s["record_book_number"], s["group_id"], s["status"])
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	id, _ := res.LastInsertId()
 	sendJSON(w, map[string]interface{}{"id": id})
 }
 
 func putStudentHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	var s map[string]interface{}
-	parseJSON(r, &s)
-	db.Exec("UPDATE students SET fio=?, record_book_number=?, group_name=?, course=?, study_form=?, training_direction=?, status=? WHERE id=?",
-		s["fio"], s["record_book_number"], s["group_name"], s["course"], s["study_form"], s["training_direction"], s["status"], id)
+	sid := idFromPath(r); var s map[string]interface{}; parseJSON(r, &s)
+	db.Exec("UPDATE students SET fio=?,record_book_number=?,group_id=?,status=? WHERE id=?",
+		s["fio"], s["record_book_number"], s["group_id"], s["status"], sid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
 func deleteStudentHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	db.Exec("DELETE FROM performance WHERE student_id=?", id)
-	db.Exec("DELETE FROM commissions WHERE student_id=?", id)
-	db.Exec("DELETE FROM students WHERE id=?", id)
+	sid := idFromPath(r)
+	db.Exec("DELETE FROM commission_members WHERE commission_id IN (SELECT c.id FROM commissions c JOIN performance p ON c.performance_id=p.id WHERE p.student_id=?)", sid)
+	db.Exec("DELETE FROM commissions WHERE performance_id IN (SELECT id FROM performance WHERE student_id=?)", sid)
+	db.Exec("DELETE FROM performance WHERE student_id=?", sid)
+	db.Exec("DELETE FROM students WHERE id=?", sid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// --- Teachers CRUD ---
+// ==================== TEACHERS ====================
 
 func getTeachersHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, fio, position, academic_degree, login FROM teachers ORDER BY fio")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rows, err := db.Query(`SELECT id, fio, position, academic_degree, login FROM teachers ORDER BY fio`)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
-
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id int
-		var fio, pos, deg, login string
+		var id int; var fio, pos, deg, login string
 		rows.Scan(&id, &fio, &pos, &deg, &login)
 		res = append(res, map[string]interface{}{
-			"id": id, "fio": fio, "position": pos, "academic_degree": deg, "login": login,
+			"id": id, "fio": fio, "position": pos,
+			"academic_degree": deg, "login": login,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
-	}
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
 func postTeacherHandler(w http.ResponseWriter, r *http.Request) {
-	var t map[string]interface{}
-	parseJSON(r, &t)
-	password := "123456"
-	if p, ok := t["password"]; ok && p != nil && p != "" {
-		password = p.(string)
-	}
-	res, err := db.Exec("INSERT INTO teachers (fio, position, academic_degree, login, password_hash) VALUES (?,?,?,?,?)",
-		t["fio"], t["position"], t["academic_degree"], t["login"], hashPassword(password))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	var t map[string]interface{}; parseJSON(r, &t)
+	pw := "123456"; if p, ok := t["password"]; ok && p != nil && p != "" { pw = p.(string) }
+	res, err := db.Exec("INSERT INTO teachers(fio,position,academic_degree,login,password_hash) VALUES(?,?,?,?,?)",
+		t["fio"], t["position"], t["academic_degree"], t["login"], hashPassword(pw))
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	id, _ := res.LastInsertId()
 	sendJSON(w, map[string]interface{}{"id": id})
 }
 
 func putTeacherHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	var t map[string]interface{}
-	parseJSON(r, &t)
-	db.Exec("UPDATE teachers SET fio=?, position=?, academic_degree=? WHERE id=?",
-		t["fio"], t["position"], t["academic_degree"], id)
+	tid := idFromPath(r); var t map[string]interface{}; parseJSON(r, &t)
+	db.Exec("UPDATE teachers SET fio=?,position=?,academic_degree=? WHERE id=?",
+		t["fio"], t["position"], t["academic_degree"], tid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
 func deleteTeacherHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	db.Exec("DELETE FROM teachers WHERE id=?", id)
+	tid := idFromPath(r)
+	db.Exec("DELETE FROM commission_members WHERE teacher_id=?", tid)
+	db.Exec("DELETE FROM teachers WHERE id=?", tid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// --- Disciplines CRUD ---
+// ==================== DISCIPLINES ====================
 
 func getDisciplinesHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query(`SELECT d.id, d.name, d.semester, d.control_type, d.hours, d.teacher_id,
-		COALESCE(t.fio, '') as teacher_fio
-		FROM disciplines d LEFT JOIN teachers t ON d.teacher_id = t.id ORDER BY d.semester, d.name`)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rows, err := db.Query(`SELECT d.id, d.name, d.semester, d.hours, d.teacher_id, d.control_type,
+		COALESCE(t.fio,'')
+		FROM disciplines d LEFT JOIN teachers t ON d.teacher_id=t.id ORDER BY d.semester, d.name`)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
-
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id, semester, hours int
-		var teacherId sql.NullInt64
-		var name, controlType, teacherFio string
-		rows.Scan(&id, &name, &semester, &controlType, &hours, &teacherId, &teacherFio)
-		tid := 0
-		if teacherId.Valid {
-			tid = int(teacherId.Int64)
-		}
+		var id, sem, hrs int; var tid sql.NullInt64
+		var name, tFio, ctName string
+		rows.Scan(&id, &name, &sem, &hrs, &tid, &ctName, &tFio)
+		t := 0; if tid.Valid { t = int(tid.Int64) }
 		res = append(res, map[string]interface{}{
-			"id": id, "name": name, "semester": semester, "control_type": controlType,
-			"hours": hours, "teacher_id": tid, "teacher_fio": teacherFio,
+			"id": id, "name": name, "semester": sem, "hours": hrs,
+			"teacher_id": t, "control_type": ctName, "teacher_fio": tFio,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
-	}
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
 func postDisciplineHandler(w http.ResponseWriter, r *http.Request) {
-	var d map[string]interface{}
-	parseJSON(r, &d)
-	res, err := db.Exec("INSERT INTO disciplines (name, semester, control_type, hours, teacher_id) VALUES (?,?,?,?,?)",
-		d["name"], d["semester"], d["control_type"], d["hours"], d["teacher_id"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	var d map[string]interface{}; parseJSON(r, &d)
+	res, err := db.Exec("INSERT INTO disciplines(name,semester,hours,teacher_id,control_type) VALUES(?,?,?,?,?)",
+		d["name"], d["semester"], d["hours"], d["teacher_id"], d["control_type"])
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	id, _ := res.LastInsertId()
 	sendJSON(w, map[string]interface{}{"id": id})
 }
 
 func putDisciplineHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	var d map[string]interface{}
-	parseJSON(r, &d)
-	db.Exec("UPDATE disciplines SET name=?, semester=?, control_type=?, hours=?, teacher_id=? WHERE id=?",
-		d["name"], d["semester"], d["control_type"], d["hours"], d["teacher_id"], id)
+	did := idFromPath(r); var d map[string]interface{}; parseJSON(r, &d)
+	db.Exec("UPDATE disciplines SET name=?,semester=?,hours=?,teacher_id=?,control_type=? WHERE id=?",
+		d["name"], d["semester"], d["hours"], d["teacher_id"], d["control_type"], did)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
 func deleteDisciplineHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	db.Exec("DELETE FROM disciplines WHERE id=?", id)
+	did := idFromPath(r)
+	db.Exec("DELETE FROM disciplines WHERE id=?", did)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// --- Performance CRUD ---
+// ==================== SHEETS ====================
 
-func getPerformanceHandler(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT p.id, p.student_id, p.discipline_id, p.teacher_id,
-		p.sheet_number, p.sheet_fill_date, p.grade, p.status, p.comment, p.has_debt, p.created_at,
-		COALESCE(s.fio,'') as student_fio, COALESCE(s.group_name,'') as student_group,
-		COALESCE(d.name,'') as discipline_name, COALESCE(d.semester,0) as semester,
-		COALESCE(t.fio,'') as teacher_fio
-		FROM performance p
-		LEFT JOIN students s ON p.student_id = s.id
-		LEFT JOIN disciplines d ON p.discipline_id = d.id
-		LEFT JOIN teachers t ON p.teacher_id = t.id`
-
-	var conditions []string
-	var args []interface{}
-
-	q := r.URL.Query()
-	if v := q.Get("group"); v != "" {
-		conditions = append(conditions, "s.group_name = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("discipline_id"); v != "" {
-		conditions = append(conditions, "p.discipline_id = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("semester"); v != "" {
-		conditions = append(conditions, "d.semester = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("student_id"); v != "" {
-		conditions = append(conditions, "p.student_id = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("has_debt"); v == "true" {
-		conditions = append(conditions, "p.has_debt = 1")
-	}
-	if v := q.Get("sheet_number"); v != "" {
-		conditions = append(conditions, "p.sheet_number = ?")
-		args = append(args, v)
-	}
-
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY s.group_name, s.fio, d.name"
-
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+func getSheetsHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT sh.id, sh.number, sh.fill_date, sh.group_id, sh.discipline_id,
+		g.name, d.name FROM sheets sh
+		JOIN groups_t g ON sh.group_id=g.id JOIN disciplines d ON sh.discipline_id=d.id
+		ORDER BY sh.number`)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
-
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id, studentId, disciplineId, semester int
-		var teacherId sql.NullInt64
-		var hasDebt int
-		var sheetNum, sheetDate, grade, status, comment, createdAt string
-		var studentFio, studentGroup, discName, teacherFio string
-		rows.Scan(&id, &studentId, &disciplineId, &teacherId,
-			&sheetNum, &sheetDate, &grade, &status, &comment, &hasDebt, &createdAt,
-			&studentFio, &studentGroup, &discName, &semester, &teacherFio)
-		tid := 0
-		if teacherId.Valid {
-			tid = int(teacherId.Int64)
-		}
+		var id, gid, did int; var num, date, gname, dname string
+		rows.Scan(&id, &num, &date, &gid, &did, &gname, &dname)
 		res = append(res, map[string]interface{}{
-			"id": id, "student_id": studentId, "discipline_id": disciplineId, "teacher_id": tid,
-			"sheet_number": sheetNum, "sheet_fill_date": sheetDate, "grade": grade,
-			"status": status, "comment": comment, "has_debt": hasDebt == 1, "created_at": createdAt,
-			"student_fio": studentFio, "student_group": studentGroup,
-			"discipline_name": discName, "semester": semester, "teacher_fio": teacherFio,
+			"id": id, "number": num, "fill_date": date, "group_id": gid,
+			"discipline_id": did, "group_name": gname, "discipline_name": dname,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
+	if res == nil { res = emptyArr() }
+	sendJSON(w, res)
+}
+
+func postSheetHandler(w http.ResponseWriter, r *http.Request) {
+	var s map[string]interface{}; parseJSON(r, &s)
+	now := time.Now().Format("2006-01-02")
+	fd := now; if d, ok := s["fill_date"].(string); ok && d != "" { fd = d }
+	// Return existing if same number
+	var existID int
+	err := db.QueryRow("SELECT id FROM sheets WHERE number=?", s["number"]).Scan(&existID)
+	if err == nil { sendJSON(w, map[string]interface{}{"id": existID}); return }
+	res, err2 := db.Exec("INSERT INTO sheets(number,fill_date,group_id,discipline_id) VALUES(?,?,?,?)",
+		s["number"], fd, s["group_id"], s["discipline_id"])
+	if err2 != nil { http.Error(w, err2.Error(), 500); return }
+	id, _ := res.LastInsertId()
+	sendJSON(w, map[string]interface{}{"id": id})
+}
+
+// ==================== PERFORMANCE ====================
+
+func getPerformanceHandler(w http.ResponseWriter, r *http.Request) {
+	q := `SELECT p.id, p.sheet_id, p.student_id, p.grade, p.comment, p.status, p.has_debt, p.created_at,
+		s.fio, g.name, sh.number, d.name, d.semester, COALESCE(t.fio,'')
+		FROM performance p
+		JOIN students s ON p.student_id=s.id JOIN groups_t g ON s.group_id=g.id
+		JOIN sheets sh ON p.sheet_id=sh.id JOIN disciplines d ON sh.discipline_id=d.id
+		LEFT JOIN teachers t ON d.teacher_id=t.id`
+
+	var conds []string; var args []interface{}
+	qp := r.URL.Query()
+	if v := qp.Get("group_id"); v != "" { conds = append(conds, "s.group_id=?"); args = append(args, v) }
+	if v := qp.Get("discipline_id"); v != "" { conds = append(conds, "sh.discipline_id=?"); args = append(args, v) }
+	if v := qp.Get("semester"); v != "" { conds = append(conds, "d.semester=?"); args = append(args, v) }
+	if v := qp.Get("has_debt"); v == "true" { conds = append(conds, "p.has_debt=1") }
+	if v := qp.Get("sheet_id"); v != "" { conds = append(conds, "p.sheet_id=?"); args = append(args, v) }
+	if len(conds) > 0 { q += " WHERE " + strings.Join(conds, " AND ") }
+	q += " ORDER BY g.name, s.fio, d.name"
+
+	rows, err := db.Query(q, args...)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	var res []map[string]interface{}
+	for rows.Next() {
+		var id, sheetID, studentID, sem, hasDebt int
+		var grade, comment, status, createdAt, sFio, gName, shNum, dName, tFio string
+		rows.Scan(&id, &sheetID, &studentID, &grade, &comment, &status, &hasDebt, &createdAt,
+			&sFio, &gName, &shNum, &dName, &sem, &tFio)
+		res = append(res, map[string]interface{}{
+			"id": id, "sheet_id": sheetID, "student_id": studentID, "grade": grade,
+			"comment": comment, "status": status, "has_debt": hasDebt == 1, "created_at": createdAt,
+			"student_fio": sFio, "group_name": gName, "sheet_number": shNum,
+			"discipline_name": dName, "semester": sem, "teacher_fio": tFio,
+		})
 	}
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
 func postPerformanceHandler(w http.ResponseWriter, r *http.Request) {
-	var p map[string]interface{}
-	parseJSON(r, &p)
-	hasDebt := 0
-	if v, ok := p["has_debt"]; ok && v == true {
-		hasDebt = 1
-	}
+	var p map[string]interface{}; parseJSON(r, &p)
+	hd := 0; if v, ok := p["has_debt"]; ok && v == true { hd = 1 }
 	now := time.Now().Format("2006-01-02")
-	res, err := db.Exec(`INSERT INTO performance (student_id, discipline_id, teacher_id, sheet_number, sheet_fill_date, grade, status, comment, has_debt, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		p["student_id"], p["discipline_id"], p["teacher_id"], p["sheet_number"],
-		p["sheet_fill_date"], p["grade"], p["status"], p["comment"], hasDebt, now)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	res, err := db.Exec(`INSERT INTO performance(sheet_id,student_id,grade,comment,status,has_debt,created_at) VALUES(?,?,?,?,?,?,?)`,
+		p["sheet_id"], p["student_id"], p["grade"], p["comment"], p["status"], hd, now)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	id, _ := res.LastInsertId()
 	sendJSON(w, map[string]interface{}{"id": id})
 }
 
 func putPerformanceHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	var p map[string]interface{}
-	parseJSON(r, &p)
-	hasDebt := 0
-	if v, ok := p["has_debt"]; ok && v == true {
-		hasDebt = 1
-	}
-	db.Exec(`UPDATE performance SET grade=?, status=?, comment=?, has_debt=? WHERE id=?`,
-		p["grade"], p["status"], p["comment"], hasDebt, id)
+	pid := idFromPath(r); var p map[string]interface{}; parseJSON(r, &p)
+	hd := 0; if v, ok := p["has_debt"]; ok && v == true { hd = 1 }
+	db.Exec("UPDATE performance SET grade=?,status=?,comment=?,has_debt=? WHERE id=?",
+		p["grade"], p["status"], p["comment"], hd, pid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
 func deletePerformanceHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	db.Exec("DELETE FROM commissions WHERE performance_id=?", id)
-	db.Exec("DELETE FROM performance WHERE id=?", id)
+	pid := idFromPath(r)
+	db.Exec("DELETE FROM commission_members WHERE commission_id IN (SELECT id FROM commissions WHERE performance_id=?)", pid)
+	db.Exec("DELETE FROM commissions WHERE performance_id=?", pid)
+	db.Exec("DELETE FROM performance WHERE id=?", pid)
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// Batch insert/update for sheet filling
+// Batch performance for sheet filling
 func batchPerformanceHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var batch struct {
-		Records []map[string]interface{} `json:"records"`
-	}
-	if err := parseJSON(r, &batch); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
-
+	if r.Method != http.MethodPost { http.Error(w, "method", 405); return }
+	var batch struct{ Records []map[string]interface{} `json:"records"` }
+	if err := parseJSON(r, &batch); err != nil { http.Error(w, "bad request", 400); return }
 	now := time.Now().Format("2006-01-02")
 	for _, rec := range batch.Records {
-		hasDebt := 0
-		if v, ok := rec["has_debt"]; ok && v == true {
-			hasDebt = 1
-		}
+		hd := 0
 		grade, _ := rec["grade"].(string)
-		// Determine has_debt based on grade
-		if grade == "Неудовлетворительно" || grade == "Не зачтено" {
-			hasDebt = 1
-		}
-		status := "Сдано"
-		if hasDebt == 1 {
-			status = "Не сдано"
-		}
-		if s, ok := rec["status"].(string); ok && s != "" {
-			status = s
-		}
-
-		// Check if record already exists
-		var existingId int
-		studentId := rec["student_id"]
-		disciplineId := rec["discipline_id"]
-		sheetNumber := rec["sheet_number"]
-
-		err := db.QueryRow("SELECT id FROM performance WHERE student_id=? AND discipline_id=? AND sheet_number=?",
-			studentId, disciplineId, sheetNumber).Scan(&existingId)
-
-		comment := ""
-		if c, ok := rec["comment"].(string); ok {
-			comment = c
-		}
-
+		if grade == "Неудовлетворительно" || grade == "Не зачтено" { hd = 1 }
+		st := "Сдано"; if hd == 1 { st = "Не сдано" }
+		if s, ok := rec["status"].(string); ok && s != "" { st = s }
+		comment := ""; if c, ok := rec["comment"].(string); ok { comment = c }
+		sheetID := rec["sheet_id"]; studentID := rec["student_id"]
+		var existID int
+		err := db.QueryRow("SELECT id FROM performance WHERE sheet_id=? AND student_id=?", sheetID, studentID).Scan(&existID)
 		if err == nil {
-			// Update existing
-			db.Exec(`UPDATE performance SET grade=?, status=?, comment=?, has_debt=?, sheet_fill_date=? WHERE id=?`,
-				grade, status, comment, hasDebt, now, existingId)
+			db.Exec("UPDATE performance SET grade=?,status=?,comment=?,has_debt=?,created_at=? WHERE id=?",
+				grade, st, comment, hd, now, existID)
 		} else {
-			// Insert new
-			teacherId := rec["teacher_id"]
-			fillDate := now
-			if fd, ok := rec["sheet_fill_date"].(string); ok && fd != "" {
-				fillDate = fd
-			}
-			db.Exec(`INSERT INTO performance (student_id, discipline_id, teacher_id, sheet_number, sheet_fill_date, grade, status, comment, has_debt, created_at)
-				VALUES (?,?,?,?,?,?,?,?,?,?)`,
-				studentId, disciplineId, teacherId, sheetNumber, fillDate, grade, status, comment, hasDebt, now)
+			db.Exec("INSERT INTO performance(sheet_id,student_id,grade,comment,status,has_debt,created_at) VALUES(?,?,?,?,?,?,?)",
+				sheetID, studentID, grade, comment, st, hd, now)
 		}
 	}
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// --- Monitoring ---
+// ==================== MONITORING ====================
 
 func getMonitoringHandler(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT p.id, p.student_id, p.discipline_id, p.teacher_id,
-		p.sheet_number, p.grade, p.status, p.comment, p.has_debt,
-		s.fio as student_fio, s.group_name, s.course,
-		d.name as discipline_name, d.semester,
-		COALESCE(t.fio,'') as teacher_fio
+	q := `SELECT p.id, p.student_id, p.grade, p.status, p.comment, p.has_debt,
+		s.fio, g.name, g.course, d.id, d.name, d.semester, COALESCE(t.id,0), COALESCE(t.fio,'')
 		FROM performance p
-		JOIN students s ON p.student_id = s.id
-		JOIN disciplines d ON p.discipline_id = d.id
-		LEFT JOIN teachers t ON p.teacher_id = t.id
-		WHERE (p.has_debt = 1 OR p.grade IN ('Неудовлетворительно', 'Не зачтено'))`
+		JOIN students s ON p.student_id=s.id JOIN groups_t g ON s.group_id=g.id
+		JOIN sheets sh ON p.sheet_id=sh.id JOIN disciplines d ON sh.discipline_id=d.id
+		LEFT JOIN teachers t ON d.teacher_id=t.id
+		WHERE (p.has_debt=1 OR p.grade IN ('Неудовлетворительно','Не зачтено'))`
 
-	var conditions []string
-	var args []interface{}
+	var conds []string; var args []interface{}
+	qp := r.URL.Query()
+	if v := qp.Get("group_id"); v != "" { conds = append(conds, "s.group_id=?"); args = append(args, v) }
+	if v := qp.Get("discipline_id"); v != "" { conds = append(conds, "sh.discipline_id=?"); args = append(args, v) }
+	if v := qp.Get("semester"); v != "" { conds = append(conds, "d.semester=?"); args = append(args, v) }
+	if v := qp.Get("teacher_id"); v != "" { conds = append(conds, "d.teacher_id=?"); args = append(args, v) }
+	if len(conds) > 0 { q += " AND " + strings.Join(conds, " AND ") }
+	q += " ORDER BY g.name, s.fio"
 
-	q := r.URL.Query()
-	if v := q.Get("group"); v != "" {
-		conditions = append(conditions, "s.group_name = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("discipline_id"); v != "" {
-		conditions = append(conditions, "p.discipline_id = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("semester"); v != "" {
-		conditions = append(conditions, "d.semester = ?")
-		args = append(args, v)
-	}
-	if v := q.Get("status"); v != "" {
-		conditions = append(conditions, "p.status = ?")
-		args = append(args, v)
-	}
-
-	if len(conditions) > 0 {
-		query += " AND " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY s.group_name, s.fio"
-
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rows, err := db.Query(q, args...)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id, studentId, disciplineId, course, semester int
-		var teacherId sql.NullInt64
-		var hasDebt int
-		var sheetNum, grade, status, comment, studentFio, groupName, discName, teacherFio string
-		rows.Scan(&id, &studentId, &disciplineId, &teacherId,
-			&sheetNum, &grade, &status, &comment, &hasDebt,
-			&studentFio, &groupName, &course, &discName, &semester, &teacherFio)
-		tid := 0
-		if teacherId.Valid {
-			tid = int(teacherId.Int64)
-		}
+		var perfID, studentID, course, discID, sem, teacherID, hasDebt int
+		var grade, status, comment, sFio, gName, dName, tFio string
+		rows.Scan(&perfID, &studentID, &grade, &status, &comment, &hasDebt,
+			&sFio, &gName, &course, &discID, &dName, &sem, &teacherID, &tFio)
 
-		// Check if already has commission
-		var commissionExists bool
-		db.QueryRow("SELECT EXISTS(SELECT 1 FROM commissions WHERE performance_id=?)", id).Scan(&commissionExists)
+		var commExists bool
+		db.QueryRow("SELECT EXISTS(SELECT 1 FROM commissions WHERE performance_id=?)", perfID).Scan(&commExists)
 
 		res = append(res, map[string]interface{}{
-			"performance_id": id, "student_id": studentId, "discipline_id": disciplineId, "teacher_id": tid,
-			"sheet_number": sheetNum, "grade": grade, "status": status, "comment": comment,
-			"has_debt": hasDebt == 1, "student_fio": studentFio, "group_name": groupName,
-			"course": course, "discipline_name": discName, "semester": semester,
-			"teacher_fio": teacherFio, "has_commission": commissionExists,
+			"performance_id": perfID, "student_id": studentID, "grade": grade,
+			"status": status, "comment": comment, "has_debt": hasDebt == 1,
+			"student_fio": sFio, "group_name": gName, "course": course,
+			"discipline_id": discID, "discipline_name": dName, "semester": sem,
+			"teacher_id": teacherID, "teacher_fio": tFio, "has_commission": commExists,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
-	}
-
-	// Calculate average grades per student
-	avgRows, err := db.Query(`SELECT p.student_id, AVG(CASE
-		WHEN p.grade = 'Отлично' THEN 5
-		WHEN p.grade = 'Хорошо' THEN 4
-		WHEN p.grade = 'Удовлетворительно' THEN 3
-		WHEN p.grade = 'Неудовлетворительно' THEN 2
-		WHEN p.grade = 'Зачтено' THEN 5
-		WHEN p.grade = 'Не зачтено' THEN 2
-		ELSE 0 END) as avg_grade
-		FROM performance p GROUP BY p.student_id`)
-	if err == nil {
-		avgMap := make(map[int]float64)
-		for avgRows.Next() {
-			var sid int
-			var avg float64
-			avgRows.Scan(&sid, &avg)
-			avgMap[sid] = avg
-		}
-		avgRows.Close()
-		for i := range res {
-			sid := int(res[i]["student_id"].(int))
-			if avg, ok := avgMap[sid]; ok {
-				res[i]["avg_grade"] = fmt.Sprintf("%.2f", avg)
-			} else {
-				res[i]["avg_grade"] = "—"
-			}
-		}
-	}
-
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
-// --- Commissions CRUD ---
+// ==================== COMMISSIONS ====================
 
 func getCommissionsHandler(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT c.id, c.student_id, c.performance_id, c.assigned_date, c.status, c.decision, c.description,
-		COALESCE(s.fio,'') as student_fio, COALESCE(s.group_name,'') as student_group,
-		COALESCE(d.name,'') as discipline_name,
-		COALESCE(p.grade,'') as grade
+	q := `SELECT c.id, c.performance_id, c.assigned_date, c.meeting_date, c.status, c.decision, c.description,
+		s.fio, g.name, d.name, p.grade
 		FROM commissions c
-		LEFT JOIN students s ON c.student_id = s.id
-		LEFT JOIN performance p ON c.performance_id = p.id
-		LEFT JOIN disciplines d ON p.discipline_id = d.id`
+		JOIN performance p ON c.performance_id=p.id
+		JOIN students s ON p.student_id=s.id JOIN groups_t g ON s.group_id=g.id
+		JOIN sheets sh ON p.sheet_id=sh.id JOIN disciplines d ON sh.discipline_id=d.id`
 
-	var conditions []string
-	var args []interface{}
-	q := r.URL.Query()
-	if v := q.Get("status"); v != "" {
-		conditions = append(conditions, "c.status = ?")
-		args = append(args, v)
-	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY c.assigned_date DESC"
+	var conds []string; var args []interface{}
+	if v := r.URL.Query().Get("status"); v != "" { conds = append(conds, "c.status=?"); args = append(args, v) }
+	if len(conds) > 0 { q += " WHERE " + strings.Join(conds, " AND ") }
+	q += " ORDER BY c.assigned_date DESC"
 
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rows, err := db.Query(q, args...)
+	if err != nil { http.Error(w, err.Error(), 500); return }
 	defer rows.Close()
 
 	var res []map[string]interface{}
 	for rows.Next() {
-		var id, studentId, perfId int
-		var date, status, decision, desc, studentFio, studentGroup, discName, grade string
-		rows.Scan(&id, &studentId, &perfId, &date, &status, &decision, &desc,
-			&studentFio, &studentGroup, &discName, &grade)
+		var id, perfID int
+		var aDate, mDate, status, decision, desc, sFio, gName, dName, grade string
+		rows.Scan(&id, &perfID, &aDate, &mDate, &status, &decision, &desc, &sFio, &gName, &dName, &grade)
+
+		// Get members
+		mRows, _ := db.Query(`SELECT t.id, t.fio, cm.role FROM commission_members cm
+			JOIN teachers t ON cm.teacher_id=t.id WHERE cm.commission_id=? ORDER BY cm.role DESC`, id)
+		var members []map[string]interface{}
+		for mRows.Next() {
+			var tid int; var tFio, role string; mRows.Scan(&tid, &tFio, &role)
+			members = append(members, map[string]interface{}{"teacher_id": tid, "fio": tFio, "role": role})
+		}
+		mRows.Close()
+		if members == nil { members = make([]map[string]interface{}, 0) }
+
 		res = append(res, map[string]interface{}{
-			"id": id, "student_id": studentId, "performance_id": perfId,
-			"assigned_date": date, "status": status, "decision": decision, "description": desc,
-			"student_fio": studentFio, "student_group": studentGroup,
-			"discipline_name": discName, "grade": grade,
+			"id": id, "performance_id": perfID, "assigned_date": aDate, "meeting_date": mDate,
+			"status": status, "decision": decision, "description": desc,
+			"student_fio": sFio, "student_group": gName, "discipline_name": dName,
+			"grade": grade, "members": members,
 		})
 	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
-	}
+	if res == nil { res = emptyArr() }
 	sendJSON(w, res)
 }
 
 func postCommissionHandler(w http.ResponseWriter, r *http.Request) {
-	var c map[string]interface{}
-	parseJSON(r, &c)
+	var c map[string]interface{}; parseJSON(r, &c)
 	now := time.Now().Format("2006-01-02")
-	date := now
-	if d, ok := c["assigned_date"].(string); ok && d != "" {
-		date = d
+	aDate := now; if d, ok := c["assigned_date"].(string); ok && d != "" { aDate = d }
+	mDate := ""; if d, ok := c["meeting_date"].(string); ok { mDate = d }
+	desc := ""; if d, ok := c["description"].(string); ok { desc = d }
+
+	res, err := db.Exec(`INSERT INTO commissions(performance_id,assigned_date,meeting_date,status,decision,description) VALUES(?,?,?,?,?,?)`,
+		c["performance_id"], aDate, mDate, "Назначена", "", desc)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	commID, _ := res.LastInsertId()
+
+	// Insert members
+	if membersI, ok := c["members"]; ok && membersI != nil {
+		members := membersI.([]interface{})
+		for _, mi := range members {
+			m := mi.(map[string]interface{})
+			tid := m["teacher_id"]; role := "Член комиссии"
+			if r, ok := m["role"].(string); ok && r != "" { role = r }
+			db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", commID, tid, role)
+		}
 	}
-	res, err := db.Exec(`INSERT INTO commissions (student_id, performance_id, assigned_date, status, decision, description)
-		VALUES (?,?,?,?,?,?)`,
-		c["student_id"], c["performance_id"], date, "Назначена", "", c["description"])
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	id, _ := res.LastInsertId()
-	sendJSON(w, map[string]interface{}{"id": id})
+	sendJSON(w, map[string]interface{}{"id": commID})
 }
 
 func putCommissionHandler(w http.ResponseWriter, r *http.Request) {
-	id := getIDFromPath(r)
-	var c map[string]interface{}
-	parseJSON(r, &c)
-	if status, ok := c["status"]; ok {
-		db.Exec("UPDATE commissions SET status=? WHERE id=?", status, id)
-	}
-	if decision, ok := c["decision"]; ok {
-		db.Exec("UPDATE commissions SET decision=? WHERE id=?", decision, id)
-	}
-	if desc, ok := c["description"]; ok {
-		db.Exec("UPDATE commissions SET description=? WHERE id=?", desc, id)
+	cid := idFromPath(r); var c map[string]interface{}; parseJSON(r, &c)
+	if v, ok := c["status"]; ok { db.Exec("UPDATE commissions SET status=? WHERE id=?", v, cid) }
+	if v, ok := c["decision"]; ok { db.Exec("UPDATE commissions SET decision=? WHERE id=?", v, cid) }
+	if v, ok := c["description"]; ok { db.Exec("UPDATE commissions SET description=? WHERE id=?", v, cid) }
+	if v, ok := c["meeting_date"]; ok { db.Exec("UPDATE commissions SET meeting_date=? WHERE id=?", v, cid) }
+
+	// Replace members if provided
+	if membersI, ok := c["members"]; ok && membersI != nil {
+		db.Exec("DELETE FROM commission_members WHERE commission_id=?", cid)
+		members := membersI.([]interface{})
+		for _, mi := range members {
+			m := mi.(map[string]interface{})
+			tid := m["teacher_id"]; role := "Член комиссии"
+			if r, ok := m["role"].(string); ok && r != "" { role = r }
+			db.Exec("INSERT INTO commission_members(commission_id,teacher_id,role) VALUES(?,?,?)", cid, tid, role)
+		}
 	}
 	sendJSON(w, map[string]bool{"ok": true})
 }
 
-// --- Groups list helper ---
-
-func getGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT DISTINCT group_name FROM students ORDER BY group_name")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	var groups []string
-	for rows.Next() {
-		var g string
-		rows.Scan(&g)
-		groups = append(groups, g)
-	}
-	if groups == nil {
-		groups = make([]string, 0)
-	}
-	sendJSON(w, groups)
-}
-
-// --- Semesters list helper ---
+// ==================== HELPERS ====================
 
 func getSemestersHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT DISTINCT semester FROM disciplines ORDER BY semester")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rows, _ := db.Query("SELECT DISTINCT semester FROM disciplines ORDER BY semester")
 	defer rows.Close()
-	var semesters []int
-	for rows.Next() {
-		var s int
-		rows.Scan(&s)
-		semesters = append(semesters, s)
-	}
-	if semesters == nil {
-		semesters = make([]int, 0)
-	}
-	sendJSON(w, semesters)
-}
-
-// --- Students by group helper ---
-
-func getStudentsByGroupHandler(w http.ResponseWriter, r *http.Request) {
-	group := r.URL.Query().Get("group")
-	if group == "" {
-		sendJSON(w, []map[string]interface{}{})
-		return
-	}
-	rows, err := db.Query("SELECT id, fio, record_book_number FROM students WHERE group_name = ? AND status = 'Активен' ORDER BY fio", group)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	var res []map[string]interface{}
-	for rows.Next() {
-		var id int
-		var fio, rb string
-		rows.Scan(&id, &fio, &rb)
-		res = append(res, map[string]interface{}{"id": id, "fio": fio, "record_book_number": rb})
-	}
-	if res == nil {
-		res = make([]map[string]interface{}, 0)
-	}
+	var res []int
+	for rows.Next() { var s int; rows.Scan(&s); res = append(res, s) }
+	if res == nil { res = make([]int, 0) }
 	sendJSON(w, res)
 }
 
-// --- Router helper ---
+func getStudentsByGroupHandler(w http.ResponseWriter, r *http.Request) {
+	gid := r.URL.Query().Get("group_id")
+	if gid == "" { sendJSON(w, emptyArr()); return }
+	rows, err := db.Query("SELECT id, fio, record_book_number FROM students WHERE group_id=? AND status='Активен' ORDER BY fio", gid)
+	if err != nil { http.Error(w, err.Error(), 500); return }
+	defer rows.Close()
+	var res []map[string]interface{}
+	for rows.Next() {
+		var id int; var fio, rb string; rows.Scan(&id, &fio, &rb)
+		res = append(res, map[string]interface{}{"id": id, "fio": fio, "record_book_number": rb})
+	}
+	if res == nil { res = emptyArr() }
+	sendJSON(w, res)
+}
 
-func routeHandler(get, post, put, del http.HandlerFunc) http.HandlerFunc {
+func getStatsHandler(w http.ResponseWriter, r *http.Request) {
+	var ts, tt, td, tDebt, tComm int
+	db.QueryRow("SELECT COUNT(*) FROM students WHERE status='Активен'").Scan(&ts)
+	db.QueryRow("SELECT COUNT(*) FROM teachers").Scan(&tt)
+	db.QueryRow("SELECT COUNT(*) FROM disciplines").Scan(&td)
+	db.QueryRow("SELECT COUNT(*) FROM performance WHERE has_debt=1").Scan(&tDebt)
+	db.QueryRow("SELECT COUNT(*) FROM commissions WHERE status!='Закрыта'").Scan(&tComm)
+	var avg float64
+	db.QueryRow(`SELECT COALESCE(AVG(CASE WHEN grade='Отлично' THEN 5 WHEN grade='Хорошо' THEN 4
+		WHEN grade='Удовлетворительно' THEN 3 WHEN grade='Неудовлетворительно' THEN 2
+		WHEN grade='Зачтено' THEN 5 WHEN grade='Не зачтено' THEN 2 ELSE 0 END),0) FROM performance`).Scan(&avg)
+	sendJSON(w, map[string]interface{}{
+		"total_students": ts, "total_teachers": tt, "total_disciplines": td,
+		"total_debts": tDebt, "total_commissions": tComm,
+		"avg_grade": strconv.FormatFloat(avg, 'f', 2, 64),
+	})
+}
+
+// ==================== ROUTER ====================
+
+func route(get, post, put, del http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-		case http.MethodGet:
-			if get != nil {
-				get(w, r)
-			} else {
-				sendJSON(w, []struct{}{})
-			}
-		case http.MethodPost:
-			if post != nil {
-				post(w, r)
-			} else {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			}
-		case http.MethodPut:
-			if put != nil {
-				put(w, r)
-			} else {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			}
-		case http.MethodDelete:
-			if del != nil {
-				del(w, r)
-			} else {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-			}
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		case http.MethodGet: if get != nil { get(w, r) } else { sendJSON(w, emptyArr()) }
+		case http.MethodPost: if post != nil { post(w, r) } else { w.WriteHeader(405) }
+		case http.MethodPut: if put != nil { put(w, r) } else { w.WriteHeader(405) }
+		case http.MethodDelete: if del != nil { del(w, r) } else { w.WriteHeader(405) }
+		default: w.WriteHeader(405)
 		}
 	}
 }
 
-// --- Stats endpoint ---
-
-func getStatsHandler(w http.ResponseWriter, r *http.Request) {
-	var totalStudents, totalTeachers, totalDisciplines, totalDebts, totalCommissions int
-	db.QueryRow("SELECT COUNT(*) FROM students WHERE status='Активен'").Scan(&totalStudents)
-	db.QueryRow("SELECT COUNT(*) FROM teachers").Scan(&totalTeachers)
-	db.QueryRow("SELECT COUNT(*) FROM disciplines").Scan(&totalDisciplines)
-	db.QueryRow("SELECT COUNT(*) FROM performance WHERE has_debt=1").Scan(&totalDebts)
-	db.QueryRow("SELECT COUNT(*) FROM commissions WHERE status != 'Закрыта'").Scan(&totalCommissions)
-
-	var avgGrade float64
-	db.QueryRow(`SELECT COALESCE(AVG(CASE
-		WHEN grade = 'Отлично' THEN 5
-		WHEN grade = 'Хорошо' THEN 4
-		WHEN grade = 'Удовлетворительно' THEN 3
-		WHEN grade = 'Неудовлетворительно' THEN 2
-		WHEN grade = 'Зачтено' THEN 5
-		WHEN grade = 'Не зачтено' THEN 2
-		ELSE 0 END), 0) FROM performance`).Scan(&avgGrade)
-
-	sendJSON(w, map[string]interface{}{
-		"total_students":    totalStudents,
-		"total_teachers":    totalTeachers,
-		"total_disciplines": totalDisciplines,
-		"total_debts":       totalDebts,
-		"total_commissions": totalCommissions,
-		"avg_grade":         strconv.FormatFloat(avgGrade, 'f', 2, 64),
-	})
-}
-
 func main() {
-	err := initDB(filepath.Join(".", "database.sqlite"))
-	if err != nil {
-		log.Fatalf("Failed to init db: %v", err)
+	if err := initDB(filepath.Join(".", "database.sqlite")); err != nil {
+		log.Fatalf("DB init failed: %v", err)
 	}
 	defer db.Close()
 
@@ -977,65 +787,55 @@ func main() {
 	// Auth
 	mux.HandleFunc("/api/login", loginHandler)
 
-	// Stats
-	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			getStatsHandler(w, r)
-		}
+	// Groups
+	mux.HandleFunc("/api/groups", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { getGroupsHandler(w, r) }
 	})
 
 	// Students
-	mux.HandleFunc("/api/students", routeHandler(getStudentsHandler, postStudentHandler, nil, nil))
-	mux.HandleFunc("/api/students/", routeHandler(nil, nil, putStudentHandler, deleteStudentHandler))
+	mux.HandleFunc("/api/students", route(getStudentsHandler, postStudentHandler, nil, nil))
+	mux.HandleFunc("/api/students/", route(nil, nil, putStudentHandler, deleteStudentHandler))
 
 	// Teachers
-	mux.HandleFunc("/api/teachers", routeHandler(getTeachersHandler, postTeacherHandler, nil, nil))
-	mux.HandleFunc("/api/teachers/", routeHandler(nil, nil, putTeacherHandler, deleteTeacherHandler))
+	mux.HandleFunc("/api/teachers", route(getTeachersHandler, postTeacherHandler, nil, nil))
+	mux.HandleFunc("/api/teachers/", route(nil, nil, putTeacherHandler, deleteTeacherHandler))
 
 	// Disciplines
-	mux.HandleFunc("/api/disciplines", routeHandler(getDisciplinesHandler, postDisciplineHandler, nil, nil))
-	mux.HandleFunc("/api/disciplines/", routeHandler(nil, nil, putDisciplineHandler, deleteDisciplineHandler))
+	mux.HandleFunc("/api/disciplines", route(getDisciplinesHandler, postDisciplineHandler, nil, nil))
+	mux.HandleFunc("/api/disciplines/", route(nil, nil, putDisciplineHandler, deleteDisciplineHandler))
+
+	// Sheets
+	mux.HandleFunc("/api/sheets", route(getSheetsHandler, postSheetHandler, nil, nil))
 
 	// Performance
-	mux.HandleFunc("/api/performance", routeHandler(getPerformanceHandler, postPerformanceHandler, nil, nil))
-	mux.HandleFunc("/api/performance/", routeHandler(nil, nil, putPerformanceHandler, deletePerformanceHandler))
+	mux.HandleFunc("/api/performance", route(getPerformanceHandler, postPerformanceHandler, nil, nil))
+	mux.HandleFunc("/api/performance/", route(nil, nil, putPerformanceHandler, deletePerformanceHandler))
 	mux.HandleFunc("/api/performance/batch", batchPerformanceHandler)
 
 	// Monitoring
 	mux.HandleFunc("/api/monitoring", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			getMonitoringHandler(w, r)
-		}
+		if r.Method == http.MethodGet { getMonitoringHandler(w, r) }
 	})
 
 	// Commissions
-	mux.HandleFunc("/api/commissions", routeHandler(getCommissionsHandler, postCommissionHandler, nil, nil))
-	mux.HandleFunc("/api/commissions/", routeHandler(nil, nil, putCommissionHandler, nil))
+	mux.HandleFunc("/api/commissions", route(getCommissionsHandler, postCommissionHandler, nil, nil))
+	mux.HandleFunc("/api/commissions/", route(nil, nil, putCommissionHandler, nil))
 
-	// Helper endpoints
-	mux.HandleFunc("/api/groups", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			getGroupsHandler(w, r)
-		}
-	})
-	mux.HandleFunc("/api/semesters", func(w http.ResponseWriter, r *http.Request) { //
-		if r.Method == http.MethodGet {
-			getSemestersHandler(w, r)
-		}
+	// Helpers
+	mux.HandleFunc("/api/semesters", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { getSemestersHandler(w, r) }
 	})
 	mux.HandleFunc("/api/students-by-group", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			getStudentsByGroupHandler(w, r)
-		}
+		if r.Method == http.MethodGet { getStudentsByGroupHandler(w, r) }
+	})
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet { getStatsHandler(w, r) }
 	})
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
-		AllowCredentials: false,
+		AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"*"}, AllowCredentials: false,
 	})
-
 	srv := &http.Server{Addr: ":3000", Handler: c.Handler(mux)}
 	log.Println("API Server running on http://localhost:3000")
 	srv.ListenAndServe()
